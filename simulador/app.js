@@ -619,25 +619,56 @@ function flashRpiLiveBox(action, source, pin) {
   el.rpiLiveSub.textContent = `Último sinal às ${hora} via ${source || "Raspberry Pi"} (GPIO ${pin != null ? pin : 17})`;
 }
 
+function triggerLocalEventDispatch(data) {
+  appendRpiHistoryRow(data);
+  flashRpiLiveBox(data.action, data.source, data.pin);
+
+  const origin = data.pin != null ? `${data.source} Pino ${data.pin}` : data.source;
+  el.rpiBridgeDetail.textContent = `Último evento: ${data.action} via ${origin}`;
+
+  if (data.action === "click") {
+    logSerial(`[RPi] Clique recebido (${origin})`);
+    if (state.mode === "full") {
+      logSerial(`[RPi] Acionando botão por 3.2s para validação do alerta completo...`);
+      handlePressStart(null, origin);
+      setTimeout(handlePressEnd, 3200);
+    } else {
+      handlePressStart(null, origin);
+      setTimeout(handlePressEnd, 150);
+    }
+  } else if (data.pressed) {
+    logSerial(`[RPi] Botão pressionado -> LOW (${origin})`);
+    handlePressStart(null, origin);
+  } else {
+    logSerial(`[RPi] Botão solto -> HIGH (${origin})`);
+    handlePressEnd();
+  }
+}
+
 async function sendLocalButtonEvent(action, pressed) {
   const endpoint =
     window.location.protocol === "file:"
       ? "http://127.0.0.1:8765/api/button"
       : "/api/button";
 
+  const payload = {
+    action,
+    pressed,
+    source: "Simulador (Teste RPi)",
+    pin: 32,
+    timestamp: Date.now() / 1000,
+  };
+
   try {
-    await fetch(endpoint, {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action,
-        pressed,
-        source: "Simulador (Teste RPi)",
-        pin: 32,
-      }),
+      body: JSON.stringify(payload),
     });
-  } catch (err) {
-    console.error("Falha ao enviar evento de teste:", err);
+    if (!res.ok) throw new Error("Offline");
+  } catch {
+    // Fallback para execução local no navegador (Vercel ou sem servidor Python)
+    triggerLocalEventDispatch(payload);
   }
 }
 
@@ -660,12 +691,20 @@ if (el.btnSimulateRpiConnect) {
           clientTimestamp: Date.now() / 1000,
         }),
       });
+      if (!res.ok) throw new Error("Offline");
       const data = await res.json();
       if (data && data.device) {
         renderRpiConfirmation(data.device);
       }
-    } catch (err) {
-      console.error("Falha ao conectar Raspberry Pi:", err);
+    } catch {
+      // Fallback para Vercel
+      renderRpiConfirmation({
+        hostname: "raspberrypi-mateus",
+        ip: "172.30.230.186",
+        pin: 32,
+        model: "Raspberry Pi 4 Model B (Simulado Web)",
+      });
+      logSerial("\n[RPi Web] >>> CONEXÃO CONFIRMADA (Modo Web/Vercel) no Pino 32 <<<");
     }
   });
 }
@@ -764,9 +803,12 @@ function connectRaspberryBridge() {
   };
 
   source.onerror = () => {
-    el.rpiBridgeBadge.textContent = "Sem servidor";
-    el.rpiBridgeBadge.className = "status-pill warn";
-    el.rpiBridgeDetail.textContent = "Rode simulador/server.py para receber sinais do Raspberry Pi.";
+    const isVercel = window.location.hostname.includes("vercel.app") || window.location.hostname.includes("github.io");
+    el.rpiBridgeBadge.textContent = isVercel ? "Modo Nuvem (Vercel)" : "Sem servidor local";
+    el.rpiBridgeBadge.className = isVercel ? "status-pill ok" : "status-pill warn";
+    el.rpiBridgeDetail.textContent = isVercel
+      ? "Simulador rodando na nuvem. Os testes e a bancada funcionam 100% no navegador!"
+      : "Rode python3 server.py no Mac para receber sinais do Raspberry Pi físico.";
   };
 
   source.onmessage = (msg) => {

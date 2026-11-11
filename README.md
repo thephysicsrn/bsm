@@ -137,3 +137,4 @@ Quando o botão no GPIO 32 é retido por 3 segundos:
 ## 👤 Autor
 Desenvolvido por **Mateus Zeca** ([@thephysicsrn](https://github.com/thephysicsrn)).
 Licença MIT.
+

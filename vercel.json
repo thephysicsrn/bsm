@@ -1,0 +1,8 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/simulador", "destination": "/index.html" },
+    { "source": "/simulador/index.html", "destination": "/index.html" },
+    { "source": "/simulador/(.*)", "destination": "/$1" }
+  ]
+}
