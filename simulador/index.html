@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulador Local — Protótipo ESP32 + GPS NEO-6M + GSM SIM800L</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="chip-badge">ESP32-D0WD-V3</span>
+      <div>
+        <h1>Simulador Local do Protótipo de Proteção</h1>
+        <p>Emulação em tempo real do firmware (Botão GPIO 32 • GPS RX 4 / TX 5 • GSM RX 26 / TX 27 • Motor GPIO 13)</p>
+      </div>
+    </div>
+
+    <div class="topbar-controls">
+      <div class="mode-switch" role="group" aria-label="Modo de operação">
+        <button id="btnModeFull" class="mode-btn active" type="button">Modo Protótipo (3s + SMS)</button>
+        <button id="btnModeGpsTest" class="mode-btn" type="button">Modo Teste GPS (1 clique)</button>
+      </div>
+      <button id="btnResetBoard" class="btn-secondary" type="button">Resetar ESP32 (EN)</button>
+    </div>
+  </header>
+
+  <!-- Barra de Navegação por Abas -->
+  <nav class="nav-tabs" role="tablist">
+    <button id="tabBtnBench" class="tab-btn active" role="tab" aria-selected="true" data-tab="tabBench" type="button">
+      🎛️ Bancada do Protótipo (ESP32)
+    </button>
+    <button id="tabBtnRaspberry" class="tab-btn" role="tab" aria-selected="false" data-tab="tabRaspberry" type="button">
+      🍓 Conectar Raspberry Pi <span id="rpiTabBadge" class="tab-pill warn">Aguardando</span>
+    </button>
+  </nav>
+
+  <!-- ABA 1: Bancada do Protótipo -->
+  <div id="tabBench" class="tab-pane active">
+    <main class="workspace">
+      <!-- Coluna 1: Bancada de Hardware -->
+      <section class="panel hardware-panel">
+        <div class="panel-header">
+          <h2>Bancada Física Simulada</h2>
+          <span id="espStateBadge" class="status-pill ok">Ligado • USB 5V</span>
+        </div>
+
+        <!-- Botão de Pânico + Motor -->
+        <div class="card panic-card">
+          <div class="card-title-row">
+            <h3>Botão de Pânico (GPIO 32 • INPUT_PULLUP)</h3>
+            <span id="buttonPinState" class="mono-badge">HIGH (Solto)</span>
+          </div>
+
+          <div class="panic-area">
+            <button id="panicButton" class="panic-btn" type="button">
+              <span class="panic-label">SEGURAR P/ ALERTA</span>
+              <span id="panicSublabel" class="panic-sub">Segure por 3.0s (ou clique/espaço)</span>
+            </button>
+
+            <div class="hold-progress-wrap">
+              <div class="hold-progress-bar">
+                <div id="holdProgressFill" class="hold-progress-fill"></div>
+              </div>
+              <div class="hold-meta">
+                <span id="holdTimerText">0.0s / 3.0s</span>
+                <span id="holdHintText">Solte antes de 3s para cancelar</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="motor-box" id="motorBox">
+            <div class="motor-icon" id="motorIcon" aria-hidden="true">📳</div>
+            <div class="motor-info">
+              <div class="motor-title">Motor Vibracall (GPIO 13 • OUTPUT)</div>
+              <div id="motorStatus" class="motor-status">LOW (Parado)</div>
+            </div>
+          </div>
+
+          <div class="rpi-bridge-box" id="rpiBridgeBox">
+            <div class="rpi-bridge-head">
+              <span>Ponte Raspberry Pi (HTTP /api/button)</span>
+              <span id="rpiBridgeBadge" class="status-pill warn">Conectando...</span>
+            </div>
+            <div id="rpiBridgeDetail" class="rpi-bridge-detail">
+              Aguardando sinal externo do Raspberry Pi...
+            </div>
+          </div>
+        </div>
+
+        <!-- Módulo GPS NEO-6M -->
+        <div class="card">
+          <div class="card-title-row">
+            <h3>GPS NEO-6M (UART2 • RX 4 / TX 5 • 9600 baud)</h3>
+            <span class="led-row">
+              <span id="gpsPowerLed" class="led green on" title="Power"></span> PWR
+              <span id="gpsFixLed" class="led blue" title="1PPS Fix"></span> FIX
+            </span>
+          </div>
+
+          <div class="form-grid">
+            <label>
+              Cenário do GPS
+              <select id="gpsScenario">
+                <option value="natal">Natal / RN (Sinal forte • 8 satélites)</option>
+                <option value="saopaulo">São Paulo / SP (Sinal médio • 6 satélites)</option>
+                <option value="nofix">Ambiente fechado (Ligado, sem fix de satélite)</option>
+                <option value="undervoltage">Falha: 3,3V insuficiente (0 bytes NMEA)</option>
+                <option value="disconnected">Falha: Fio TX/RX desconectado</option>
+              </select>
+            </label>
+
+            <label>
+              Pinos UART2
+              <select id="gpsPins">
+                <option value="4,5" selected>RX=4, TX=5 (Atual do bsm.ino)</option>
+                <option value="16,17">RX=16, TX=17 (Legado)</option>
+              </select>
+            </label>
+
+            <label>
+              Latitude
+              <input id="gpsLatInput" type="number" step="0.000001" value="-5.794480" />
+            </label>
+
+            <label>
+              Longitude
+              <input id="gpsLngInput" type="number" step="0.000001" value="-35.211000" />
+            </label>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric"><span>Bytes NMEA</span><strong id="mBytes">0</strong></div>
+            <div class="metric"><span>Frases válidas</span><strong id="mValid">0</strong></div>
+            <div class="metric"><span>Satélites</span><strong id="mSats">8</strong></div>
+            <div class="metric"><span>Fix GPS</span><strong id="mFix">Válido</strong></div>
+          </div>
+
+          <div class="nmea-stream">
+            <div class="stream-label">Última sentença NMEA ($GPRMC / $GPGGA):</div>
+            <code id="nmeaPreview">Aguardando inicialização...</code>
+          </div>
+        </div>
+
+        <!-- Módulo GSM SIM800L -->
+        <div class="card">
+          <div class="card-title-row">
+            <h3>GSM SIM800L (UART1 • RX 26 / TX 27)</h3>
+            <span class="led-row">
+              <span id="gsmNetLed" class="led amber"></span> NET
+            </span>
+          </div>
+
+          <div class="form-grid">
+            <label>
+              Status da Rede GSM
+              <select id="gsmScenario">
+                <option value="online">Operadora registrada (Sinal OK)</option>
+                <option value="nosim">Sem chip SIM / Sem rede</option>
+              </select>
+            </label>
+
+            <label>
+              Número de Emergência
+              <input id="emergencyNumber" type="text" value="+5584999283827" />
+            </label>
+
+            <label class="full-span">
+              ID da Vítima (`ID_VITIMA`)
+              <input id="victimId" type="text" value="Maria da Penha" />
+            </label>
+          </div>
+
+          <div class="at-log">
+            <div class="stream-label">Comandos AT (SerialGSM):</div>
+            <pre id="gsmAtLog">Pronto. Aguardando gatilho...</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Coluna 2: Monitor Serial + Celular de Emergência -->
+      <section class="panel output-panel">
+        <div class="card serial-card">
+          <div class="panel-header">
+            <h2>Monitor Serial (115200 baud)</h2>
+            <button id="btnClearSerial" class="btn-small" type="button">Limpar</button>
+          </div>
+          <pre id="serialConsole" class="serial-console" aria-live="polite"></pre>
+        </div>
+
+        <div class="card phone-card">
+          <div class="panel-header">
+            <h2>Celular de Emergência (<span id="phoneTarget">+5584999283827</span>)</h2>
+            <span id="smsCountBadge" class="mono-badge">0 SMS</span>
+          </div>
+          <div id="smsList" class="sms-list">
+            <div class="sms-empty">
+              Nenhum alerta recebido ainda. Segure o botão de pânico por 3 segundos no Modo Protótipo para simular o envio do SMS.
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ABA 2: Conexão e Confirmação do Raspberry Pi -->
+  <div id="tabRaspberry" class="tab-pane">
+    <main class="rpi-dashboard">
+      <!-- TELA DE CONFIRMAÇÃO DO RASPBERRY PI -->
+      <section class="card rpi-hero-card" id="rpiHeroCard">
+        <div class="rpi-hero-status">
+          <div class="rpi-hero-icon" id="rpiHeroIcon">⏳</div>
+          <div class="rpi-hero-texts">
+            <div class="rpi-hero-badge-row">
+              <span id="rpiConfirmationPill" class="status-pill warn">Aguardando Conexão</span>
+              <span id="rpiLastHeartbeat" class="mono-badge">Sem sinal</span>
+            </div>
+            <h2 id="rpiConfirmationTitle">Aguardando o Raspberry Pi conectar...</h2>
+            <p id="rpiConfirmationDesc">
+              Execute o script no seu Raspberry Pi para estabelecer a comunicação bidirecional e ativar o botão externo.
+            </p>
+          </div>
+        </div>
+
+        <div class="rpi-details-grid" id="rpiDetailsGrid">
+          <div class="rpi-detail-item">
+            <span class="lbl">Dispositivo</span>
+            <strong id="rpiDevHost">—</strong>
+          </div>
+          <div class="rpi-detail-item">
+            <span class="lbl">IP do Raspberry Pi</span>
+            <strong id="rpiDevIp">—</strong>
+          </div>
+          <div class="rpi-detail-item">
+            <span class="lbl">Pino do Botão no Pi</span>
+            <strong id="rpiDevPin">Pino 32 (Físico 32 / BCM 12)</strong>
+          </div>
+          <div class="rpi-detail-item">
+            <span class="lbl">Mapeado no ESP32</span>
+            <strong class="highlight-pin">GPIO 32 (INPUT_PULLUP)</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Grade com Assistente de Conexão + Teste Remoto -->
+      <div class="rpi-two-col">
+        <!-- Coluna Esquerda: Como conectar (passo a passo) -->
+        <section class="card">
+          <div class="panel-header">
+            <h3>Como Conectar o Raspberry Pi ao Mac</h3>
+          </div>
+
+          <div class="rpi-steps">
+            <div class="rpi-step">
+              <div class="step-num">1</div>
+              <div class="step-body">
+                <strong>Ligue o botão físico nos pinos do Raspberry Pi:</strong>
+                <ul>
+                  <li>Um terminal no <strong>Pino Físico 32</strong> (BOARD 32 / GPIO BCM 12)</li>
+                  <li>Outro terminal no <strong>Pino Físico 34 ou 30 (GND)</strong></li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="rpi-step">
+              <div class="step-num">2</div>
+              <div class="step-body">
+                <strong>Baixe o arquivo diretamente no Raspberry Pi (via rede local):</strong>
+                <div class="code-copy-box">
+                  <code id="rpiDownloadCode">curl -O http://172.30.230.186:8765/raspberry_botao.py</code>
+                  <button id="btnCopyDownload" class="btn-small" type="button">Copiar</button>
+                </div>
+                <small class="muted-text">
+                  Execute no terminal do Raspberry Pi para baixar o script pronto do Mac.
+                </small>
+              </div>
+            </div>
+
+            <div class="rpi-step">
+              <div class="step-num">3</div>
+              <div class="step-body">
+                <strong>Execute no terminal do Raspberry Pi:</strong>
+                <div class="code-copy-box">
+                  <code id="rpiCommandCode">python3 raspberry_botao.py --server http://172.30.230.186:8765 --pin 32</code>
+                  <button id="btnCopyCommand" class="btn-small" type="button">Copiar</button>
+                </div>
+                <small class="muted-text">
+                  Dica: Para testar sem a placa física, adicione <code>--interactive</code> ao final.
+                </small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Coluna Direita: Teste Manual + Diagnóstico de Sinal -->
+        <section class="card">
+          <div class="panel-header">
+            <h3>Testar Sinal do Raspberry Pi</h3>
+            <span id="rpiSignalIndicator" class="mono-badge">Botão: HIGH (Solto)</span>
+          </div>
+
+          <p class="muted-text">
+            Você pode testar o envio de sinais diretamente por estes botões para validar a resposta do simulador antes de ligar a chave física:
+          </p>
+
+          <div class="rpi-test-actions">
+            <button id="btnSimulateRpiConnect" class="btn-secondary ok" type="button">
+              🍓 Conectar / Confirmar Raspberry Pi
+            </button>
+            <button id="btnSimulateRpiClick" class="btn-secondary" type="button">
+              ⚡ Simular Clique Rápido (Teste GPS)
+            </button>
+            <button id="btnSimulateRpiHold" class="btn-secondary danger" type="button">
+              🚨 Simular Segurar 3.2s (Alerta de Pânico)
+            </button>
+          </div>
+
+          <div class="rpi-live-box" id="rpiLiveBox">
+            <div class="rpi-live-title">Status ao Vivo do Sinal Externo:</div>
+            <div class="rpi-live-state" id="rpiLiveState">AGUARDANDO SINAL</div>
+            <div class="rpi-live-sub" id="rpiLiveSub">Nenhum evento recebido nesta sessão</div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Tabela de Histórico de Eventos do Raspberry Pi -->
+      <section class="card">
+        <div class="panel-header">
+          <h3>Histórico de Eventos Recebidos do Raspberry Pi</h3>
+          <button id="btnClearRpiHistory" class="btn-small" type="button">Limpar Histórico</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="rpi-history-table">
+            <thead>
+              <tr>
+                <th>Horário</th>
+                <th>Ação</th>
+                <th>Estado do Botão</th>
+                <th>Origem / Pino</th>
+                <th>Resposta do Mac</th>
+              </tr>
+            </thead>
+            <tbody id="rpiHistoryBody">
+              <tr class="empty-row">
+                <td colspan="5">Nenhum evento registrado ainda. Conecte o Raspberry Pi ou use os botões de teste acima.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
